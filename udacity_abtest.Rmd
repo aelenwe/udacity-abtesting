@@ -1,0 +1,232 @@
+# A/B Testing: 
+
+### Metric Choice
+
+Invariant Metrics: Number of cookies, number of clicks, click through probability
+
+Evaluation Metrics: Gross conversion, retention, net conversion
+
+
+* **Number of cookies**: Use this for invariant metric. Since the change occurs after the user clicks "Start Free Trial" the number of users who come to the course overview page should not change since the users haven't yet seen the change
+* **Number of user-ids**: Neither. Not good as an invariant metric because the experiment might change the # of enrollments and we would expect that the control and experiment group would have different # of enrollments. Not a good evaluation metric since the number of enrollments can vary day to day.
+* **Number of clicks**: Use for invariant metric. Since users don't see the change until they click on the "Start Free Trial" button the trial shouldn't have an effect
+* **Click-through-probability**: Use for invariant metric. It's made up of # clicks and # cookies which are both useful for invariant metrics and shouldn't be affected by the changes
+* **Gross conversion**: Evaluation Metric since it's dependent on the number of users to complete checkout which is the experiment
+* **Retention**: Evaluation Metric since it's dependent on the experiment and shows the change in revenue
+* **Net conversion**: Evaluation Metric since it's dependent on the experiment and it also shows the change in revenue
+
+Since we are essentially looking for higher quality leads, i.e. users that are more likely to become paying customers, I'll be looking for a change in gross conversion and net conversion. We currently have people moving forward with the free trial who don't have the time to commit and are less likely to become paying customers. Therefore, I am looking for a decrease in gross conversion. Since the overall goal is to convert users to paying customers, the ideal metric for this is net conversion. I will be looking for an increase in net conversion.
+
+### Measuring Variability
+
+|Metric                                               |    Value|
+|-----------------------------------------------------|--------:|
+|Unique cookies to view page per day:                 |   40,000|
+|Unique cookies to click "Start free trial" per day:  |    3,200|
+|Enrollments per day:                                 |      660|
+|Click-through-probability on "Start free trial":	  |     0.08|
+|Probability of enrolling, given click:               |  0.20625|
+|Probability of payment, given enroll:                |     0.53|
+|Probability of payment, given click                  |0.1093125|
+
+Because the distribution follows CLT, the standard deviation is given by: SD = sqrt(variance / n)
+
+$\text{retention SD} = \sqrt{\frac{0.53*(1-0.53)}{660}} =  0.019427409565463\\
+\text{net conversion SD} = \sqrt{\frac{0.1093*(1-0.1093)}{3200}}  =  0.00551597898563092\\
+\text{gross conversion SD} = \sqrt{\frac{0.20625*(1-0.20625)}{3200}} = 0.00715259868640412$
+
+I expect Gross Conversion and the Net Conversion to be relatively accurate since they both have the unit of diversion, a cookie, in the denominator. Likewise, I do not expect Retention to be accurate since it has the number of user-ids to complete checkout as the denominator. I would want to collect and empirical estimate of the variability for Retention.
+
+```{r}
+# Remember to set the current working directory
+# To read in the data
+baseline = read.csv('data/baseline.csv',header=FALSE)
+
+retention_sd = sqrt(baseline$V2[6]*(1-baseline$V2[6])/baseline$V2[3])
+net_conv_sd = sqrt(baseline$V2[7]*(1-baseline$V2[7])/baseline$V2[2])
+gross_conv_sd = sqrt(baseline$V2[5]*(1-baseline$V2[5])/baseline$V2[2])
+print(paste(retention_sd, net_conv_sd, gross_conv_sd))
+```
+### Sizing
+#### Choosing Number of Samples given Power
+Using the analytic estimates of variance, how many pageviews total (across both groups) would you need to collect to adequately power the experiment? Use an alpha of 0.05 and a beta of 0.2. Make sure you have enough power for each metric.
+```{r}
+alpha = 0.05
+beta = 0.2
+power = 1 - beta
+
+gross_conversion_sample_size = power.prop.test(p1 = baseline$V2[5], p2 = baseline$V2[5] + 0.01, power = power)
+retention_sample_size = power.prop.test(p1 = baseline$V2[6], p2 = baseline$V2[6] + 0.01, power = power)
+net_conversion_sample_size = power.prop.test(p1 = baseline$V2[7], p2 = baseline$V2[7] + 0.0075, power = power)
+gross_conversion_sample_size$n
+retention_sample_size$n
+net_conversion_sample_size$n
+
+```
+Each test has 2 groups so the total number of pageviews for each metric is as follows:
+
+##### Gross Conversion    
+* sample size = 26,155
+* total sample size = 26,155 * 2 = 52,310
+* Clicks per pageview: 3200/40000 = .08
+* pageviews = Sample Size / Clicks per pageview = 52,310 / 0.08 = 653,875
+
+##### Retention
+* sample size = 39,051
+* total sample size = 39,051 * 2 = 78,102
+* Enrollments per pageview: 660/40000 = .0165
+* pageviews = Sample Size / Enrollments per Pageview = 78,102 / .0165 = 4,733,455
+
+##### Net Conversion
+* sample size = 27,984
+* total sample size = 27,984 * 2 = 55,968
+* Clicks per pageview: 3200/40000 = .08
+* pageviews = Sample Size / Clicks per pageview = 55,968 / .08 = 699,600
+
+Based on a rate of 40,000 pageviews and an assumption of 100% of the traffic flowing into the experiment with a split of 50%/50% between test and control, it would take approximately 17 days, 119 days, and 18 days to achieve the required pageviews for gross conversion, retention, and net conversion respectively. While waiting for the 119 days would be ideal, that's a really long duration for the test. I would run the test for 18 days and collect 699,600 pageviews.
+
+#### Choosing Duration vs. Exposure
+Assuming there are no other experiments running, I would divert 100% of the traffic into the test. I don't believe the change is risky enough to prohibit me from running the test on all of the traffic. Even if the number of users who sign up for the free trial goes down, that likely cuts down on the number of enrollments that don't extend past the free trial and therefore saves Udacity time/money.
+
+As I stated earlier, assuming 100% of the traffic is diverted and the split between the control and experiment group is 50%/50%, the test should take 18 days.
+
+### Analysis
+```{r}
+control = read.csv("data/control.csv")
+experiment = read.csv("data/experiment.csv")
+
+sum(control$Pageviews)
+sum(experiment$Pageviews)
+
+sum(control$Clicks)
+sum(experiment$Clicks)
+
+cookie_sd = sqrt((0.5 * (1 - 0.5)) / (sum(control$Pageviews) + sum(experiment$Pageviews)))
+cookie_error = 1.96 * sqrt((0.5 * (1 - 0.5)) / (sum(control$Pageviews) + sum(experiment$Pageviews)))
+cookie_ci = c(0.5 - cookie_error, 0.5 + cookie_error)
+
+print(cookie_sd)
+print(cookie_error)
+print(cookie_ci)
+print(sum(control$Pageviews) / (sum(control$Pageviews) + sum(experiment$Pageviews)))
+
+click_sd = sqrt((0.5 * (1 - 0.5)) / (sum(control$Clicks) + sum(experiment$Clicks)))
+click_error = 1.96 * sqrt((0.5 * (1 - 0.5)) / (sum(control$Clicks) + sum(experiment$Clicks)))
+click_ci = c(0.5 - click_error, 0.5 + click_error)
+print(click_sd)
+print(click_error)
+print(click_ci)
+print(sum(control$Clicks) / (sum(control$Clicks) + sum(experiment$Clicks)) )
+
+control_ctp = sum(control$Clicks) / sum(control$Pageviews)
+control_ctp_sd = sqrt((control_ctp * (1 - control_ctp)) / sum(control$Pageviews))
+ctp_error = 1.96 * control_ctp_sd
+ctp_ci = c(control_ctp - ctp_error, control_ctp + ctp_error)
+experiment_ctp = sum(experiment$Clicks) / sum(experiment$Pageviews)
+
+print(control_ctp)
+print(control_ctp_sd)
+print(ctp_error)
+print(ctp_ci)
+print(experiment_ctp)
+```
+#### Sanity Checks
+
+We expect that the number of cookies, the  number of clicks, and the click through probability are the same between the control and experiment groups.
+
+$p = 0.5 \\
+\alpha = 0.05 \\
+Z = 1.96$
+
+$\sigma_{cookies} = \sqrt{\frac{(0.5)(1 - 0.5)}{345543 + 344660}} =  0.0006018407 \\
+\text{cookie error} = 1.96 * \sigma_{cookies} = 0.001179608\\
+\text{CI} = [0.5 - \text{cookie error}, 0.5 + \text{cookie error}] = [0.4988204, 0.5011796]$
+
+Observed Rate of Pageviews= # Pageviews in Control / Total Pageviews = 0.5006397
+
+
+**This falls within the confidence interval and therefore passes the sanity check.**
+
+$\sigma_{clicks} = \sqrt{\frac{(0.5)(1 - 0.5)}{28378 + 28325}} =  0.002099747 \\
+\text{click error} = 1.96 * \sigma_{clicks} = 0.004115504\\
+\text{CI} = [0.5 - \text{click error, } 0.5 + \text{click error}], 0.4958845, 0.5041155$
+
+Observed Rate = # Clicks in Control / Total Clicks = 0.5004673
+
+**This falls within the confidence interval and therefore passes the sanity check.**
+
+For the click through probability we are no longer using $p = 0.5$. We will use the control group to calculate the probability and a confidence interval around the probability We will then check the probability in the experiment group to see whether the sanity check passes.
+
+$\text{control click through probability} = \frac{28378}{345543} = 0.08212581 \\
+\sigma_{CTP} = \sqrt{\frac{0.08212581 * (1 - 0.08212581)}{345543}} = 0.0004670683 \\ 
+\text{CTP error} = 1.96 * 0.0004670683 =  0.0009154538\\
+\text{CTP CI} = [0.08212581 - \text{CTP error, } 0.08212581 + \text{CTP error}] = [0.08121036, 0.08304127] \\
+\text{experiment click through probability} = \frac{28325}{344660} = 0.08218244$
+
+**This falls within the confidence interval and therefore passes the sanity check.**
+
+#### Check for Practical and Stastical Significance
+To check for practical and statistical significance we can do a 2-sample test for equality of proportions.
+```{r}
+control2 = na.omit(control)
+experiment2 = na.omit(experiment)
+
+prop.test(x = c(sum(experiment2$Enrollments), sum(control2$Enrollments)), n = c(sum(experiment2$Clicks), sum(control2$Clicks)))
+
+prop.test(x = c(sum(experiment2$Enrollments), sum(control2$Enrollments)), n = c(sum(experiment2$Clicks), sum(control2$Clicks)))
+
+prop.test(x = c(sum(experiment2$Payments), sum(control2$Payments)), n = c(sum(experiment2$Clicks), sum(control2$Clicks)))
+
+```
+Since we decided to run the test for less than the time to gather enough pageviews to adequately test retention, that metric is not evaluated here.
+
+I did not use a Bonferroni correction because I want both of the metrics to be significant, not just one.
+
+Based on a 95% CI for control - experiment = [-0.02917804, -0.01193170] gross conversion is statically significant. With a dmin of 0.01 the CI does not include the practical significance boundary and therefore the gross conversion is practically significant.
+
+Based on a 95% CI for control - experiment = [-0.011662068,  0.001914623] net conversion is not statically significant. Additionally, with a dmin of 0.0075, differences less than the dmin are in the CI and therefore the test is not practically significant.
+
+#### Sign Test
+
+```{r}
+n = nrow(control2)
+control_gross_conversion = control2$Enrollments / control2$Clicks
+experiment_gross_conversion = experiment2$Enrollments / experiment2$Clicks
+gross_conversion_diff = experiment_gross_conversion - control_gross_conversion
+
+control_net_conversion = control2$Payments / control2$Clicks
+experiment_net_conversion = experiment2$Payments / experiment2$Clicks
+net_conversion_diff = experiment_net_conversion - control_net_conversion
+
+binom.test(sum(gross_conversion_diff > 0), n)
+binom.test(sum(net_conversion_diff > 0), n)
+
+print(mean(control_gross_conversion))
+print(mean(experiment_gross_conversion))
+
+print(mean(control_net_conversion))
+print(mean(experiment_net_conversion))
+```
+
+Based on p-values of 0.002599 and 0.6776 and a significance level of 0.025 (using Bonferroni) we can conclude that gross conversion is significant and net conversion is not significant. This matches our previous findings.
+
+#### Recommendation
+
+While the effect on gross conversion was significant, the effect on net conversion was not. In fact, the net conversion rate for the experiment group was approximately 0.5% less than the net conversion rate for the control group. Based on effect on the net conversion rate I recommend that we do not launch the change to Udacity's website.
+
+### Follow-up Experiment
+
+I propose creating mini lessons of no more than 10 minutes. This will make it easier for users to fit the course into their already busy day and make it more likely that they will continue in the course past the free trial period.
+
+**Null Hypothesis:** Creating mini lessons will not increase the number of students enrolled beyond the 14 day free trial period by a significant amount.
+
+**Unit of Diversion:** user-id since the change takes place after the student creates an account and enrolls in a course
+
+**Invariant Metrics:** user-id, since an equal distribution between experiment and control is expected as a function of the setup of the experiment
+
+**Evaluation Metrics:** Retention. A statistically and practically significant increase in Retention would indicate that the change is succesful.
+
+
+
+
+
